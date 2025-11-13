@@ -1,0 +1,437 @@
+@page "/behavior-data-sheet"
+@using Microsoft.AspNetCore.Components.Forms
+@inject IJSRuntime JSRuntime
+@inject BehaviorDataPdfService PdfService
+@rendermode InteractiveServer
+
+<PageTitle>Behavior Data Sheet Generator</PageTitle>
+
+<div class="container">
+    <h1 class="mb-4">Behavior Data Sheet Generator</h1>
+    
+    <EditForm Model="@behaviorData" OnValidSubmit="@GeneratePdf">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label">Client Name:</label>
+                    <InputText @bind-Value="behaviorData.ClientName" class="form-control" />
+                </div>
+            </div>
+        </div>
+        
+        <div class="mb-3">
+            <label class="form-label">Target Behaviors:</label>
+            <div class="input-group mb-2">
+                <select @bind="selectedBehavior" class="form-control">
+                    <option value="">Select a behavior to add</option>
+                    @foreach (var behavior in availableBehaviors)
+                    {
+                        <option value="@behavior">@behavior</option>
+                    }
+                </select>
+                <button type="button" class="btn btn-outline-secondary" @onclick="AddBehavior">Add Behavior</button>
+            </div>
+            
+            @if (behaviorData.TargetBehaviors.Any())
+            {
+                <div class="list-group">
+                    @foreach (var behavior in behaviorData.TargetBehaviors)
+                    {
+                        <div class="list-group-item">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <strong>@behavior</strong>
+                                <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RemoveBehavior(behavior)">Remove</button>
+                            </div>
+                            
+                            <div class="mb-2">
+                                <label class="form-label small">Dimensions for @behavior:</label>
+                                <div class="row">
+                                    @foreach (var dimension in behaviorData.AvailableDimensions.Keys)
+                                    {
+                                        <div class="col-md-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" 
+                                                       checked="@IsDimensionSelected(behavior, dimension)"
+                                                       @onchange="@(e => ToggleDimension(behavior, dimension, (bool)e.Value!))" 
+                                                       id="@($"{behavior}_{dimension}")">
+                                                <label class="form-check-label" for="@($"{behavior}_{dimension}")">
+                                                    @dimension
+                                                </label>
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <!-- SCIP-R Maneuvers Section: Placeholder for dynamic rendering -->
+        <div class="mb-3 border rounded p-3 bg-light">
+            <label class="form-label fw-bold">SCIP-R Maneuvers:</label>
+            @foreach (var category in scipRManeuvers.ManeuverCategories)
+            {
+                <div class="mt-2 mb-1"><strong>@category.Key</strong></div>
+                <div class="row">
+                    @foreach (var maneuver in category.Value)
+                    {
+                        <div class="col-md-6">
+                            <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="@maneuver.Replace(' ', '_')"
+                        checked="@scipRManeuvers.SelectedManeuvers.Contains(maneuver)"
+                        @onchange="(e => OnScipRManeuverChanged(maneuver, (bool)e.Value!))" />
+                                <label class="form-check-label" for="@maneuver.Replace(' ', '_')">
+                                    @maneuver
+                                </label>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Setting:</label>
+            <InputSelect @bind-Value="behaviorData.Setting" class="form-control" @onchange="OnSettingChanged">
+                <option value="">Select Setting</option>
+                <option value="Education">Education</option>
+                <option value="Residential">Residential</option>
+            </InputSelect>
+        </div>
+
+        <div class="mb-3">
+            <button type="submit" class="btn btn-primary btn-lg">
+                <i class="bi bi-file-earmark-pdf"></i> Generate PDF
+            </button>
+        </div>
+    </EditForm>
+</div>
+
+@code {
+    private Models.BehaviorDataSheet behaviorData = new();
+    private string selectedBehavior = string.Empty;
+
+    // Add this class for SCIP-R Maneuvers
+    private ScipRManeuversModel scipRManeuvers = new();
+
+    private List<string> availableBehaviors = new List<string>
+    {
+        "Aggression",
+        "Self-Injury", 
+        "Elopement",
+        "Pica",
+        "Disruptive Behaviors",
+        "Mouthing",
+        "Impulsivity",
+        "Agitation",
+        "Refusal Behavior",
+        "Off-Task Behavior",
+        "Property Destruction",
+        "Ritualistic Behavior",
+        "Unsanitary Behavior",
+        "Sensory Stimulation",
+        "Stereotypy/Repetitive Behavior",
+        "Inappropriate Social Behavior",
+        "Inappropriate Touch",
+        "Sexually Inappropriate Behavior",
+        "Disrobing",
+        "Food Stealing"
+    };
+    
+    protected override void OnInitialized()
+    {
+        // Initialize with default values
+        behaviorData.IntervalDuration = 30;
+        behaviorData.TotalIntervals = 60; // 30 minutes worth of 30-second intervals
+    }
+    
+    private void OnSettingChanged(ChangeEventArgs e)
+    {
+        behaviorData.Setting = e.Value?.ToString() ?? string.Empty;
+        InitializeDataStructures();
+    }
+    
+    private void InitializeDataStructures()
+    {
+        // Initialize data structures based on setting
+        foreach (var behavior in behaviorData.TargetBehaviors)
+        {
+            // Initialize dimensions if not exists
+            if (!behaviorData.BehaviorDimensions.ContainsKey(behavior))
+            {
+                behaviorData.BehaviorDimensions[behavior] = new List<string>();
+            }
+            
+            InitializeDataForBehavior(behavior);
+        }
+    }
+    
+    private void AddBehavior()
+    {
+        if (!string.IsNullOrWhiteSpace(selectedBehavior) && !behaviorData.TargetBehaviors.Contains(selectedBehavior))
+        {
+            behaviorData.TargetBehaviors.Add(selectedBehavior);
+            
+            // Initialize dimensions for the new behavior
+            behaviorData.BehaviorDimensions[selectedBehavior] = new List<string>();
+            
+            // Initialize data for the new behavior based on current setting
+            InitializeDataForBehavior(selectedBehavior);
+            
+            selectedBehavior = string.Empty;
+        }
+    }
+    
+    private void InitializeDataForBehavior(string behavior)
+    {
+        if (behaviorData.Setting == "Education")
+        {
+            // Initialize main behavior
+            if (!behaviorData.EducationData.ContainsKey(behavior))
+            {
+                behaviorData.EducationData[behavior] = new Dictionary<string, bool>();
+                foreach (var day in behaviorData.EducationDays)
+                {
+                    behaviorData.EducationData[behavior][day] = false;
+                }
+            }
+            
+            // Initialize dimension sub-rows
+            if (behaviorData.BehaviorDimensions.ContainsKey(behavior))
+            {
+                foreach (var dimension in behaviorData.BehaviorDimensions[behavior])
+                {
+                    if (behaviorData.AvailableDimensions.ContainsKey(dimension))
+                    {
+                        foreach (var subDimension in behaviorData.AvailableDimensions[dimension])
+                        {
+                            var dimensionKey = $"{behavior} - {subDimension}";
+                            if (!behaviorData.EducationData.ContainsKey(dimensionKey))
+                            {
+                                behaviorData.EducationData[dimensionKey] = new Dictionary<string, bool>();
+                                foreach (var day in behaviorData.EducationDays)
+                                {
+                                    behaviorData.EducationData[dimensionKey][day] = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else if (behaviorData.Setting == "Residential")
+        {
+            // Initialize main behavior
+            if (!behaviorData.ResidentialData.ContainsKey(behavior))
+            {
+                behaviorData.ResidentialData[behavior] = new Dictionary<string, bool>();
+                foreach (var shift in behaviorData.ResidentialShifts)
+                {
+                    behaviorData.ResidentialData[behavior][shift] = false;
+                }
+            }
+            
+            // Initialize dimension sub-rows
+            if (behaviorData.BehaviorDimensions.ContainsKey(behavior))
+            {
+                foreach (var dimension in behaviorData.BehaviorDimensions[behavior])
+                {
+                    if (behaviorData.AvailableDimensions.ContainsKey(dimension))
+                    {
+                        foreach (var subDimension in behaviorData.AvailableDimensions[dimension])
+                        {
+                            var dimensionKey = $"{behavior} - {subDimension}";
+                            if (!behaviorData.ResidentialData.ContainsKey(dimensionKey))
+                            {
+                                behaviorData.ResidentialData[dimensionKey] = new Dictionary<string, bool>();
+                                foreach (var shift in behaviorData.ResidentialShifts)
+                                {
+                                    behaviorData.ResidentialData[dimensionKey][shift] = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private void RemoveBehavior(string behavior)
+    {
+        behaviorData.TargetBehaviors.Remove(behavior);
+        behaviorData.BehaviorDimensions.Remove(behavior);
+        behaviorData.EducationData.Remove(behavior);
+        behaviorData.ResidentialData.Remove(behavior);
+        behaviorData.IntervalData.Remove(behavior);
+    }
+    
+    // Dimension management methods
+    private bool IsDimensionSelected(string behavior, string dimension)
+    {
+        return behaviorData.BehaviorDimensions.ContainsKey(behavior) && 
+               behaviorData.BehaviorDimensions[behavior].Contains(dimension);
+    }
+    
+    private void ToggleDimension(string behavior, string dimension, bool isSelected)
+    {
+        if (!behaviorData.BehaviorDimensions.ContainsKey(behavior))
+        {
+            behaviorData.BehaviorDimensions[behavior] = new List<string>();
+        }
+        
+        if (isSelected && !behaviorData.BehaviorDimensions[behavior].Contains(dimension))
+        {
+            behaviorData.BehaviorDimensions[behavior].Add(dimension);
+            
+            // Initialize data structures for the new dimension
+            if (behaviorData.AvailableDimensions.ContainsKey(dimension))
+            {
+                foreach (var subDimension in behaviorData.AvailableDimensions[dimension])
+                {
+                    var dimensionKey = $"{behavior} - {subDimension}";
+                    
+                    if (behaviorData.Setting == "Education")
+                    {
+                        behaviorData.EducationData[dimensionKey] = new Dictionary<string, bool>();
+                        foreach (var day in behaviorData.EducationDays)
+                        {
+                            behaviorData.EducationData[dimensionKey][day] = false;
+                        }
+                    }
+                    else if (behaviorData.Setting == "Residential")
+                    {
+                        behaviorData.ResidentialData[dimensionKey] = new Dictionary<string, bool>();
+                        foreach (var shift in behaviorData.ResidentialShifts)
+                        {
+                            behaviorData.ResidentialData[dimensionKey][shift] = false;
+                        }
+                    }
+                }
+            }
+        }
+        else if (!isSelected && behaviorData.BehaviorDimensions[behavior].Contains(dimension))
+        {
+            behaviorData.BehaviorDimensions[behavior].Remove(dimension);
+            
+            // Remove data structures for the removed dimension
+            if (behaviorData.AvailableDimensions.ContainsKey(dimension))
+            {
+                foreach (var subDimension in behaviorData.AvailableDimensions[dimension])
+                {
+                    var dimensionKey = $"{behavior} - {subDimension}";
+                    behaviorData.EducationData.Remove(dimensionKey);
+                    behaviorData.ResidentialData.Remove(dimensionKey);
+                }
+            }
+        }
+    }
+    
+    private List<string> GetSelectedDimensions(string behavior)
+    {
+        return behaviorData.BehaviorDimensions.ContainsKey(behavior) ? 
+               behaviorData.BehaviorDimensions[behavior] : new List<string>();
+    }
+    
+    // Education data methods
+    private bool GetEducationValue(string behavior, string day)
+    {
+        if (!behaviorData.EducationData.ContainsKey(behavior))
+        {
+            behaviorData.EducationData[behavior] = new Dictionary<string, bool>();
+            foreach (var d in behaviorData.EducationDays)
+            {
+                behaviorData.EducationData[behavior][d] = false;
+            }
+        }
+        
+        return behaviorData.EducationData[behavior].ContainsKey(day) ? behaviorData.EducationData[behavior][day] : false;
+    }
+    
+    private void SetEducationValue(string behavior, string day, bool value)
+    {
+        if (!behaviorData.EducationData.ContainsKey(behavior))
+        {
+            behaviorData.EducationData[behavior] = new Dictionary<string, bool>();
+            foreach (var d in behaviorData.EducationDays)
+            {
+                behaviorData.EducationData[behavior][d] = false;
+            }
+        }
+        
+        behaviorData.EducationData[behavior][day] = value;
+    }
+    
+    private int CalculateEducationTotalForBehavior(string behavior)
+    {
+        if (!behaviorData.EducationData.ContainsKey(behavior))
+            return 0;
+            
+        return behaviorData.EducationData[behavior].Values.Count(x => x);
+    }
+    
+    // Residential data methods
+    private bool GetResidentialValue(string behavior, string shift)
+    {
+        if (!behaviorData.ResidentialData.ContainsKey(behavior))
+        {
+            behaviorData.ResidentialData[behavior] = new Dictionary<string, bool>();
+            foreach (var s in behaviorData.ResidentialShifts)
+            {
+                behaviorData.ResidentialData[behavior][s] = false;
+            }
+        }
+        
+        return behaviorData.ResidentialData[behavior].ContainsKey(shift) ? behaviorData.ResidentialData[behavior][shift] : false;
+    }
+    
+    private void SetResidentialValue(string behavior, string shift, bool value)
+    {
+        if (!behaviorData.ResidentialData.ContainsKey(behavior))
+        {
+            behaviorData.ResidentialData[behavior] = new Dictionary<string, bool>();
+            foreach (var s in behaviorData.ResidentialShifts)
+            {
+                behaviorData.ResidentialData[behavior][s] = false;
+            }
+        }
+        
+        behaviorData.ResidentialData[behavior][shift] = value;
+    }
+    
+    private int CalculateResidentialTotalForBehavior(string behavior)
+    {
+        if (!behaviorData.ResidentialData.ContainsKey(behavior))
+            return 0;
+            
+        return behaviorData.ResidentialData[behavior].Values.Count(x => x);
+    }
+    
+
+    private void OnScipRManeuverChanged(string maneuver, bool isChecked)
+    {
+        if (isChecked)
+            scipRManeuvers.SelectedManeuvers.Add(maneuver);
+        else
+            scipRManeuvers.SelectedManeuvers.Remove(maneuver);
+    }
+
+    private async Task GeneratePdf()
+    {
+        try
+        {
+            // Generate PDF, include SCIP-R maneuvers in the data sheet
+            var pdfBytes = PdfService.GenerateBehaviorDataSheetPdf(behaviorData, (BehaviorDataSheetApp.Models.ScipRManeuversModel)scipRManeuvers);
+
+            var settingAbbrev = behaviorData.Setting.Equals("Education", StringComparison.OrdinalIgnoreCase) ? "Ed" : "Res";
+            var clientName = behaviorData.ClientName?.Replace(" ", "_") ?? "Client";
+            var fileName = $"{DateTime.Now:yyyy.MM.dd}_{clientName}_{settingAbbrev}.pdf";
+            await JSRuntime.InvokeVoidAsync("downloadFile", fileName, Convert.ToBase64String(pdfBytes));
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Error generating PDF: {ex.Message}");
+        }
+    }
+}
