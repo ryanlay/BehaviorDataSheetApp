@@ -15,7 +15,7 @@ A professional Blazor web application for generating behavior data sheets in PDF
 
 ### Prerequisites
 
-- .NET 9.0 SDK or later
+- .NET 8.0 SDK or later
 - Modern web browser
 
 ### Running the Application
